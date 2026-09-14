@@ -1,0 +1,109 @@
+name: Publish
+
+on:
+  schedule:
+    - cron: '*/15 * * * *'
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+    inputs:
+      rebase-on-live:
+        description: Build on the live repo instead of the last publish (after the server refused one)
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+concurrency:
+  group: publish-${{ github.event_name == 'pull_request' && github.ref || 'main' }}
+  cancel-in-progress: false
+
+jobs:
+  attribution:
+    name: No AI attribution
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      - name: Check every commit
+        run: tools/check-commit-messages --all
+
+      - name: Check the pull request
+        if: github.event_name == 'pull_request'
+        env:
+          TITLE: ${{ github.event.pull_request.title }}
+          BODY: ${{ github.event.pull_request.body }}
+        run: printf '%s\n%s\n' "$TITLE" "$BODY" | tools/check-commit-messages -
+
+  check:
+    name: Anything to publish?
+    if: github.event_name != 'pull_request'
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      actions: write
+    outputs:
+      publish: ${{ steps.plan.outputs.publish }}
+    steps:
+      - uses: actions/checkout@v7
+
+      # GitHub switches a public repo's schedules off after 60 days without
+      # activity; enabling the workflow again is what keeps it on.
+      - name: Keep the schedule on
+        if: github.event_name == 'schedule'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh workflow enable publish.yml --repo "$GITHUB_REPOSITORY"
+
+      - id: plan
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          REBASE_ON_LIVE: ${{ inputs.rebase-on-live }}
+        run: ./publish.py check
+
+  publish:
+    name: Sign and publish
+    needs: [attribution, check]
+    if: needs.check.outputs.publish == 'true'
+    runs-on: ubuntu-24.04
+    environment: flatpak-repo
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Install flatpak and ostree
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends flatpak ostree
+
+      - id: build
+        name: Build the signed repo
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          GPG_PRIVATE_KEY: ${{ secrets.FLATPAK_GPG_PRIVATE_KEY }}
+          GPG_PASSPHRASE: ${{ secrets.FLATPAK_GPG_PASSPHRASE }}
+          REBASE_ON_LIVE: ${{ inputs.rebase-on-live }}
+        run: ./publish.py publish release
+
+      - name: Release it
+        if: steps.build.outputs.publish == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ steps.build.outputs.tag }}
+        run: |
+          gh release create "$TAG" --title "$TAG" --notes-file release/notes.md release/flatpak-repo.tar
+          # The json goes last: the server waits for it, so it never sees a
+          # release whose tarball is still uploading.
+          gh release upload "$TAG" release/flatpak-repo.json
+
+          # The server only ever needs the newest; keep a few for reference.
+          gh release list --limit 100 --json tagName --jq '.[].tagName | select(startswith("publish-"))' |
+            tail -n +11 |
+            while read -r old; do
+              gh release delete "$old" --cleanup-tag --yes
+            done

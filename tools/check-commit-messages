@@ -1,0 +1,38 @@
+#!/bin/sh
+#
+# Fail if a commit carries AI attribution: a Co-authored-by trailer, a
+# "Generated with" footer, or any mention of Claude or Anthropic in the
+# message or the author and committer identities.
+#
+#   tools/check-commit-messages --all     # every commit on every ref
+#   tools/check-commit-messages FILE      # one message (the commit-msg hook)
+#   tools/check-commit-messages -         # text on stdin (PR title and body)
+#
+set -eu
+
+PATTERN='claude|anthropic|co-authored-by:|generated with'
+
+case "${1:-}" in
+--all)
+    git log --all --format='@commit %H%n%an <%ae>%n%cn <%ce>%n%B' |
+        awk -v pattern="$PATTERN" '
+            /^@commit / { commit = $2; next }
+            tolower($0) ~ pattern { print commit ": " $0; bad = 1 }
+            END { exit bad }
+        ' || {
+        echo "AI attribution found in the commits above." >&2
+        exit 1
+    }
+    echo "Checked $(git rev-list --all | wc -l) commits: no AI attribution."
+    ;;
+'')
+    echo "usage: $0 --all | FILE | -" >&2
+    exit 2
+    ;;
+*)
+    if grep -v '^#' "$1" | grep -n -i -E "$PATTERN" >&2; then
+        echo "AI attribution found in the lines above." >&2
+        exit 1
+    fi
+    ;;
+esac

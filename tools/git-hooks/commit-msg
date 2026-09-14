@@ -1,0 +1,7 @@
+#!/bin/sh
+#
+# Refuse a commit whose message carries AI attribution. Enable with:
+#
+#   git config core.hooksPath tools/git-hooks
+#
+exec "$(dirname "$0")/../check-commit-messages" "$1"
