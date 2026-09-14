@@ -1,3 +1,4 @@
 [
-  {"repo": "steeb-k/post", "app_id": "io.github.steeb_k.Post"}
+  {"repo": "steeb-k/post", "app_id": "io.github.steeb_k.Post"},
+  {"repo": "steeb-k/commune", "app_id": "io.github.steeb_k.Commune"}
 ]
