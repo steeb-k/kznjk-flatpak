@@ -207,24 +207,30 @@ def setup_gpg(work):
 
 
 def app_refs(build_repo, build):
-    """The refs a build may publish: its app and locale, on its own branch."""
-    app_id, branch = build["app_id"], build["branch"]
-    allowed, refs = [], run("ostree", "refs", f"--repo={build_repo}",
-                            capture_output=True, text=True).stdout.split()
-    for ref in refs:
-        kind, name, _, ref_branch = (ref.split("/") + [""] * 4)[:4]
+    """Map the build's refs onto the branch it's published to.
+
+    A build may carry only its own app and its .Locale, all built on one
+    branch; each is published under the branch flatpak-build.json names, so an
+    app can build once and decide stable or beta when it releases.
+    """
+    app_id, where = build["app_id"], f"{build['repo']} {build['release']}"
+    mapped, built_on = [], set()
+    for ref in run("ostree", "refs", f"--repo={build_repo}",
+                   capture_output=True, text=True).stdout.split():
+        kind, name, arch, branch = (ref.split("/") + [""] * 4)[:4]
         if kind not in ("app", "runtime"):
             continue  # appstream: rebuilt by build-update-repo
         if name == f"{app_id}.Debug":
             continue  # most of the repo's size, and nobody installs it
-        if ref_branch != branch or (kind, name) not in (("app", app_id),
-                                                         ("runtime", f"{app_id}.Locale")):
-            raise SystemExit(f"{build['repo']} {build['release']} carries {ref}, which "
-                             f"isn't {app_id}'s to publish on {branch}.")
-        allowed.append(ref)
-    if not any(r.startswith("app/") for r in allowed):
-        raise SystemExit(f"{build['repo']} {build['release']} has no app ref.")
-    return allowed
+        if (kind, name) not in (("app", app_id), ("runtime", f"{app_id}.Locale")):
+            raise SystemExit(f"{where} carries {ref}, which isn't {app_id}'s to publish.")
+        built_on.add(branch)
+        mapped.append((ref, f"{kind}/{name}/{arch}/{build['branch']}"))
+    if len(built_on) > 1:
+        raise SystemExit(f"{where} mixes refs from branches {', '.join(sorted(built_on))}.")
+    if not any(src.startswith("app/") for src, _ in mapped):
+        raise SystemExit(f"{where} has no app ref.")
+    return mapped
 
 
 def verify(work, repo, refs):
@@ -292,15 +298,16 @@ def publish(args):
                 build_repo.mkdir()
                 run("tar", "-C", build_repo, "-xf", build_tar)
                 build_tar.unlink()
-                refs = app_refs(build_repo, build)
-                # Stamped now, not with the build's own time: clients refuse an
-                # update that's older than what they have, and a re-released
-                # older build would be.
-                run("flatpak", "build-commit-from", f"--src-repo={build_repo}",
-                    f"--gpg-sign={KEY_ID}", "--no-update-summary", "--timestamp=NOW",
-                    f"--subject={build['repo']} {build['release']}", repo, *refs)
+                for src, dst in app_refs(build_repo, build):
+                    # Stamped now, not with the build's own time: clients refuse
+                    # an update that's older than what they have, and a
+                    # re-released older build would be.
+                    run("flatpak", "build-commit-from", f"--src-repo={build_repo}",
+                        f"--src-ref={src}", f"--gpg-sign={KEY_ID}", "--no-update-summary",
+                        "--timestamp=NOW", f"--subject={build['repo']} {build['release']}",
+                        repo, dst)
+                    committed.append(dst)
                 shutil.rmtree(build_repo)
-                committed += refs
                 published[key] = {k: build[k] for k in ("repo", "release", "tar_sha256")}
                 notes.append(f"- {key}: [{build['repo']} {build['release']}]"
                              f"(https://github.com/{build['repo']}/releases/tag/{build['release']})")

@@ -32,9 +32,9 @@ Add it to `apps.json`:
 {"repo": "steeb-k/example", "app_id": "io.github.steeb_k.Example"}
 ```
 
-Then have its release workflow build with `flatpak-builder --repo=repo
---default-branch=stable` (the `flatpak/flatpak-github-actions/flatpak-builder`
-action with `branch: stable` does this) and attach the result:
+Then have its release workflow build with `flatpak-builder --repo=repo` (the
+`flatpak/flatpak-github-actions/flatpak-builder` action does this, on any
+branch) and attach the result, naming the branch to publish it on:
 
 ```sh
 tar -C repo -cf flatpak-build.tar .
@@ -44,10 +44,11 @@ gh release upload "$TAG" --clobber flatpak-build.tar
 gh release upload "$TAG" --clobber flatpak-build.json   # last
 ```
 
-A build may only carry its own app ref and its `.Locale` on the branch it
-names. Anything else is refused, `.Debug` is dropped, and appstream is rebuilt
-here. Each branch gets the newest release that has a build attached,
-pre-releases included, so a beta channel is just `"branch": "beta"`.
+A build may only carry its own app ref and its `.Locale`, and they're published
+under the branch the json names, whatever branch they were built on. Anything
+else is refused, `.Debug` is dropped, and appstream is rebuilt here. Each branch
+gets the newest release that has a build attached, pre-releases included, so a
+beta channel is just `"branch": "beta"` on a pre-release.
 
 ## Secrets
 
