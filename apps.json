@@ -1,5 +1,6 @@
 [
   {"repo": "steeb-k/post", "app_id": "io.github.steeb_k.Post"},
   {"repo": "steeb-k/commune", "app_id": "io.github.steeb_k.Commune"},
-  {"repo": "steeb-k/cipher", "app_id": "io.github.steeb_k.Cipher"}
+  {"repo": "steeb-k/cipher", "app_id": "io.github.steeb_k.Cipher"},
+  {"repo": "steeb-k/vial-tutor", "app_id": "io.github.steeb_k.VialTutor"}
 ]
