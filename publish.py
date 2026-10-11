@@ -6,6 +6,11 @@ Each app's own CI attaches an unsigned build to its GitHub release:
   flatpak-build.tar   the `flatpak-builder --repo` directory, tarred
   flatpak-build.json  {"app_id", "branch", "tar_sha256"}, uploaded last
 
+The workflow's own token only sees public repos. An app in a private repo is
+read with APPS_TOKEN, a fine-grained token with read access to that repo's
+contents; an app whose releases can't be read with either is skipped, with a
+warning, so the others still go out.
+
 This is the only thing that holds the signing key. It starts from the repo as
 last published (the newest publish-* release here, or a mirror of the live
 repo on the first run), commits every build that isn't in it yet, signs the
@@ -41,6 +46,7 @@ HERE = Path(__file__).resolve().parent
 API = os.environ.get("GITHUB_API_URL", "https://api.github.com")
 PUBLISHER = os.environ.get("GITHUB_REPOSITORY", "steeb-k/kznjk-flatpak")
 TOKEN = os.environ.get("GITHUB_TOKEN")
+APPS_TOKEN = os.environ.get("APPS_TOKEN") or TOKEN
 REPO_URL = os.environ.get("REPO_URL", "https://apps.kznjk.com/repo")
 KEY_ID = os.environ.get("GPG_KEY_ID", "D6A05D0395B0401C5134203655F485F01EDE0F50")
 PUBLIC_KEY = Path(os.environ.get("PUBLIC_KEY", HERE / "kznjk.gpg"))
@@ -63,18 +69,44 @@ def output(**values):
                 f.write(f"{key}={value}\n")
 
 
-def http_get(url, dest=None, api=False):
+class _NoRedirect(urllib.request.HTTPRedirectHandler):
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        return None
+
+
+_OPENER = urllib.request.build_opener(_NoRedirect)
+
+
+def http_get(url, dest=None, api=False, token=None, accept="application/vnd.github+json"):
+    """GET url, to memory or to dest.
+
+    A redirect is followed without the API headers: GitHub hands asset
+    downloads to a CDN that refuses a request carrying both its signed URL
+    and an Authorization header.
+    """
     headers = {"User-Agent": "kznjk-flatpak-publish"}
     if api:
-        headers["Accept"] = "application/vnd.github+json"
-        if TOKEN:
-            headers["Authorization"] = f"Bearer {TOKEN}"
+        headers["Accept"] = accept
+        if token:
+            headers["Authorization"] = f"Bearer {token}"
     request = urllib.request.Request(url, headers=headers)
-    with urllib.request.urlopen(request, timeout=300) as response:
+    try:
+        response = _OPENER.open(request, timeout=300)
+    except urllib.error.HTTPError as e:
+        if e.code in (301, 302, 303, 307, 308) and e.headers.get("Location"):
+            return http_get(e.headers["Location"], dest)
+        raise
+    with response:
         if dest is None:
             return response.read()
         with open(dest, "wb") as f:
             shutil.copyfileobj(response, f)
+
+
+def asset_get(url, dest=None, token=None):
+    """Download a release asset by its API url; that works for private repos
+    too, where browser_download_url needs a logged-in browser."""
+    return http_get(url, dest, api=True, token=token, accept="application/octet-stream")
 
 
 def run(*args, **kwargs):
@@ -89,25 +121,46 @@ def sha256(path):
     return digest.hexdigest()
 
 
-def releases(repo):
+def releases(repo, token):
     """Newest first, drafts left out."""
-    found = json.loads(http_get(f"{API}/repos/{repo}/releases?per_page=30", api=True))
+    found = json.loads(http_get(f"{API}/repos/{repo}/releases?per_page=30", api=True, token=token))
     return [r for r in found if not r["draft"]]
 
 
+def app_releases(repo):
+    """An app's releases and the token that could read them, or ([], None).
+
+    APPS_TOKEN first, for a private repo; a fine-grained token scoped to that
+    repo gets 404 for every other one, so the workflow's token is the
+    fallback. An app readable with neither is skipped, not fatal: one
+    misconfigured app shouldn't stop the others from being published.
+    """
+    for token in dict.fromkeys([APPS_TOKEN, TOKEN]):
+        try:
+            return releases(repo, token), token
+        except urllib.error.HTTPError as e:
+            if e.code not in (403, 404):
+                raise
+    log(f"::warning::Can't read the releases of {repo}: skipped. "
+        "A private repo needs APPS_TOKEN, a fine-grained token with read access to its contents.")
+    return [], None
+
+
 def assets(release):
-    return {a["name"]: a["browser_download_url"] for a in release["assets"]}
+    """Asset name -> API url, for asset_get."""
+    return {a["name"]: a["url"] for a in release["assets"]}
 
 
 def latest_builds(apps):
     """The newest build of each app on each branch, keyed "app_id//branch"."""
     builds = {}
     for app in apps:
-        for release in releases(app["repo"]):
+        found, token = app_releases(app["repo"])
+        for release in found:
             files = assets(release)
             if not {"flatpak-build.json", "flatpak-build.tar"} <= files.keys():
                 continue
-            meta = json.loads(http_get(files["flatpak-build.json"]))
+            meta = json.loads(asset_get(files["flatpak-build.json"], token=token))
             where = f"{app['repo']} {release['tag_name']}"
             if meta["app_id"] != app["app_id"]:
                 raise SystemExit(f"{where} is a build of {meta['app_id']}, not {app['app_id']}.")
@@ -121,15 +174,21 @@ def latest_builds(apps):
                 "tar_sha256": meta["tar_sha256"],
                 "tar_url": files["flatpak-build.tar"],
             })
+            ASSET_TOKENS[files["flatpak-build.tar"]] = token
     return builds
 
 
+# Asset url -> the token that can download it; filled by latest_builds. Kept
+# out of the build dicts, which end up in the published flatpak-repo.json.
+ASSET_TOKENS = {}
+
+
 def last_publish():
-    for release in releases(PUBLISHER):
+    for release in releases(PUBLISHER, TOKEN):
         files = assets(release)
         if release["tag_name"].startswith("publish-") and \
                 {"flatpak-repo.json", "flatpak-repo.tar"} <= files.keys():
-            return release, json.loads(http_get(files["flatpak-repo.json"])), files["flatpak-repo.tar"]
+            return release, json.loads(asset_get(files["flatpak-repo.json"], token=TOKEN)), files["flatpak-repo.tar"]
     return None, None, None
 
 
@@ -267,7 +326,7 @@ def publish(args):
         if base:
             state, tar_url = base
             log(f"Building on the last publish, summary {state['summary']}.")
-            http_get(tar_url, work / "base.tar")
+            asset_get(tar_url, work / "base.tar", token=TOKEN)
             if sha256(work / "base.tar") != state["tar_sha256"]:
                 raise SystemExit("The last publish's flatpak-repo.tar doesn't match its checksum.")
             run("tar", "-C", repo, "-xf", work / "base.tar")
@@ -291,7 +350,7 @@ def publish(args):
                 log(f"Committing {key} from {build['repo']} {build['release']}")
                 build_repo = work / "build"
                 build_tar = work / "build.tar"
-                http_get(build["tar_url"], build_tar)
+                asset_get(build["tar_url"], build_tar, token=ASSET_TOKENS.get(build["tar_url"]))
                 if sha256(build_tar) != build["tar_sha256"]:
                     raise SystemExit(f"{build['repo']} {build['release']}: flatpak-build.tar "
                                      "doesn't match flatpak-build.json.")

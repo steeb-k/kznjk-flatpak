@@ -50,11 +50,18 @@ else is refused, `.Debug` is dropped, and appstream is rebuilt here. Each branch
 gets the newest release that has a build attached, pre-releases included, so a
 beta channel is just `"branch": "beta"` on a pre-release.
 
+An app in a **private** repo is read with the `APPS_TOKEN` secret (see below);
+without it the app is skipped with a warning and the others still publish.
+
 ## Secrets
 
 The `flatpak-repo` environment, usable from `main` only, holds
 `FLATPAK_GPG_PRIVATE_KEY` (armored) and `FLATPAK_GPG_PASSPHRASE` for key
 `D6A0 5D03 95B0 401C 5134  2036 55F4 85F0 1EDE 0F50`.
+
+`APPS_TOKEN` (repository secret) is a fine-grained personal access token with
+read-only **Contents** on each private app repo in `apps.json`. The workflow's
+own token can't see private repos. Public apps need nothing.
 
 ## When the server refuses a publish
 

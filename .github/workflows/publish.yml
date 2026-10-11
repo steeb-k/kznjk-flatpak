@@ -62,6 +62,7 @@ jobs:
       - id: plan
         env:
           GITHUB_TOKEN: ${{ github.token }}
+          APPS_TOKEN: ${{ secrets.APPS_TOKEN }}
           REBASE_ON_LIVE: ${{ inputs.rebase-on-live }}
         run: ./publish.py check
 
@@ -85,6 +86,7 @@ jobs:
         name: Build the signed repo
         env:
           GITHUB_TOKEN: ${{ github.token }}
+          APPS_TOKEN: ${{ secrets.APPS_TOKEN }}
           GPG_PRIVATE_KEY: ${{ secrets.FLATPAK_GPG_PRIVATE_KEY }}
           GPG_PASSPHRASE: ${{ secrets.FLATPAK_GPG_PASSPHRASE }}
           REBASE_ON_LIVE: ${{ inputs.rebase-on-live }}
