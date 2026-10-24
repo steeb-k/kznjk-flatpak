@@ -1,0 +1,16 @@
+# Dependabot opens a pull request once a week when one of the actions the
+# publisher uses has a newer release. GitHub switches off a scheduled workflow
+# after 60 days without activity in the repository, so these merges also
+# keep the 15-minute publish schedule alive through a quiet stretch.
+version: 2
+updates:
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+    commit-message:
+      prefix: ci
+    groups:
+      actions:
+        patterns: ["*"]
