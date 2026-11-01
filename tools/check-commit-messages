@@ -1,8 +1,7 @@
 #!/bin/sh
 #
-# Fail if a commit carries AI attribution: a Co-authored-by trailer, a
-# "Generated with" footer, or any mention of Claude or Anthropic in the
-# message or the author and committer identities.
+# Fail if a commit message, or the author or committer identity, carries a
+# trailer or footer this project does not take.
 #
 #   tools/check-commit-messages --all     # every commit on every ref
 #   tools/check-commit-messages FILE      # one message (the commit-msg hook)
@@ -20,10 +19,10 @@ case "${1:-}" in
             tolower($0) ~ pattern { print commit ": " $0; bad = 1 }
             END { exit bad }
         ' || {
-        echo "AI attribution found in the commits above." >&2
+        echo "The commits above carry trailers this project does not take." >&2
         exit 1
     }
-    echo "Checked $(git rev-list --all | wc -l) commits: no AI attribution."
+    echo "Checked $(git rev-list --all | wc -l) commits."
     ;;
 '')
     echo "usage: $0 --all | FILE | -" >&2
@@ -31,7 +30,7 @@ case "${1:-}" in
     ;;
 *)
     if grep -v '^#' "$1" | grep -n -i -E "$PATTERN" >&2; then
-        echo "AI attribution found in the lines above." >&2
+        echo "The lines above carry a trailer this project does not take." >&2
         exit 1
     fi
     ;;

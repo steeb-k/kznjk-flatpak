@@ -21,8 +21,8 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
-  attribution:
-    name: No AI attribution
+  messages:
+    name: Commit messages
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v7
@@ -68,7 +68,7 @@ jobs:
 
   publish:
     name: Sign and publish
-    needs: [attribution, check]
+    needs: [messages, check]
     if: needs.check.outputs.publish == 'true'
     runs-on: ubuntu-24.04
     environment: flatpak-repo

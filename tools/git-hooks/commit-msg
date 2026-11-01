@@ -1,6 +1,7 @@
 #!/bin/sh
 #
-# Refuse a commit whose message carries AI attribution. Enable with:
+# Refuse a commit whose message carries a trailer this project does not
+# take. Enable with:
 #
 #   git config core.hooksPath tools/git-hooks
 #
