@@ -296,7 +296,9 @@ def verify(work, repo, refs):
     """Check the repo the way a client would, against the committed public key."""
     env = dict(os.environ, FLATPAK_USER_DIR=str(work / "flatpak"))
     run("flatpak", "remote-add", "--user", f"--gpg-import={PUBLIC_KEY}", "check", f"file://{repo}", env=env)
-    listed = run("flatpak", "remote-ls", "--user", "--all", "--columns=ref", "check",
+    # Every arch: without --arch, remote-ls shows only the runner's own, and
+    # an app built for aarch64 as well looked missing from its own summary.
+    listed = run("flatpak", "remote-ls", "--user", "--all", "--arch=*", "--columns=ref", "check",
                  env=env, capture_output=True, text=True).stdout.split()
     missing = [r for r in refs if r not in listed]
     if missing:
